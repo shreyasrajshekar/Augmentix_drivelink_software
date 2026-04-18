@@ -4,7 +4,7 @@ class_name Car
 # ── Exports ──────────────────────────────────────────────────────────────────
 @export var base_speed: float = 15.0
 @export var aggressiveness: float = 0.7
-
+@export var is_ambulance: bool = false
 # ── Public state (read by Main / HUD) ────────────────────────────────────────
 var car_index: int = 0
 var lane: int = 1
@@ -12,6 +12,7 @@ var target_lane: int = 1
 var current_speed: float = 0.0
 var urgency: float = 0.0
 var perceived_gap: int = 1
+var is_emergency_yielding: bool = false
 
 # ── Internal ──────────────────────────────────────────────────────────────────
 var ml_client: MLClient
@@ -25,7 +26,7 @@ var merge_start_x: float = 0.0
 var merge_target_x: float = 0.0
 var merge_t: float = 0.0
 const MERGE_DURATION: float = 1.4
-
+var ml_safety_enabled: bool = true
 # Collision avoidance
 var _braking: bool = false
 var _brake_target_speed: float = 0.0
@@ -69,7 +70,9 @@ func _ready():
 	_build_car_mesh()
 	position.x = _lane_x(lane)
 	position.y = 0.0
-
+	if is_ambulance:
+		base_speed *= 1.6
+		aggressiveness = 1.0
 	ml_client = get_node_or_null("/root/Main/MLClient")
 	if ml_client:
 		ml_client.prediction_received.connect(_on_ml_prediction)
@@ -77,6 +80,7 @@ func _ready():
 		push_warning("Car %d: MLClient not found" % car_index)
 
 func _process(delta: float):
+	_handle_ambulance_yield()
 	_handle_collision_avoidance(delta)
 	_handle_movement(delta)
 	_handle_merge_animation(delta)
@@ -94,7 +98,24 @@ func _handle_movement(delta: float):
 		current_speed = move_toward(current_speed, base_speed, ACCEL_RATE * delta)
 
 	position.z -= current_speed * delta
+func _find_nearby_ambulance() -> Car:
+	var main = get_node_or_null("/root/Main")
+	if main == null or not main.has_method("get_cars"):
+		return null
 
+	for other in main.get_cars():
+		if other == self:
+			continue
+		if not other.is_ambulance:
+			continue
+
+		var dz = abs(position.z - other.position.z)
+
+		# Only care if ambulance is close AND in same lane
+		if dz < 25.0 and other.lane == lane:
+			return other
+
+	return null
 # ── Collision avoidance ───────────────────────────────────────────────────────
 func _handle_collision_avoidance(delta: float):
 	var car_ahead = _find_car_ahead()
@@ -120,7 +141,30 @@ func _handle_collision_avoidance(delta: float):
 	else:
 		_braking = false
 		perceived_gap = int(LOOK_AHEAD * 2)
+func _handle_ambulance_yield():
+	if is_ambulance:
+		return   # ambulance doesn't yield
 
+	var ambulance = _find_nearby_ambulance()
+
+	if ambulance == null:
+		is_emergency_yielding = false
+		return
+
+	is_emergency_yielding = true
+
+	# Try to move out of lane immediately (ignore ML)
+	if not is_merging:
+		if lane > 1:
+			target_lane = lane - 1
+		elif lane < num_lanes:
+			target_lane = lane + 1
+
+		_start_merge()
+
+	# Slow down aggressively
+	_braking = true
+	_brake_target_speed = ambulance.current_speed * 0.6
 func _find_car_ahead() -> Car:
 	# Ask Main for the car list
 	var main = get_node_or_null("/root/Main")
@@ -237,7 +281,8 @@ func _update_urgency():
 # ── ML prediction ─────────────────────────────────────────────────────────────
 func _handle_prediction_request(delta: float):
 	prediction_cooldown -= delta
-
+	if is_ambulance:
+		return
 	if prediction_cooldown > 0 or awaiting_prediction or is_merging:
 		return
 
@@ -339,7 +384,8 @@ func _build_car_mesh():
 	glass_mat.albedo_color = Color(0.15, 0.20, 0.30, 0.65)
 	glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	glass_mat.roughness = 0.05
-
+	if is_ambulance:
+		body_mat.albedo_color = Color(1, 1, 1) # white ambulance
 	var wheel_mat = StandardMaterial3D.new()
 	wheel_mat.albedo_color = Color(0.08, 0.08, 0.08)
 	wheel_mat.roughness = 0.92

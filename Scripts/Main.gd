@@ -25,7 +25,7 @@ var cam_pitch: float = -18.0
 
 var _lane_x_positions: Array = []   # world-X for each lane
 var _road_half_width: float = 0.0
-
+var ml_safety_enabled: bool = true
 var virtual_camera_z: float = 0.0
 var road_container: Node3D
 
@@ -509,7 +509,36 @@ func _mat_metal(color: Color) -> StandardMaterial3D:
 	var m = StandardMaterial3D.new()
 	m.albedo_color = color; m.metallic = 0.65; m.roughness = 0.38
 	return m
+func _on_ml_toggle_changed(is_on: bool):
+	ml_safety_enabled = is_on
+	
+	# 1. Handle UI Mesh Map Visibility
+	# Assuming your lane meshes or markers are in a specific group
+	# Or you can hide the car labels in the HUD
+	for car in cars:
+		if is_instance_valid(car):
+			# Hide the visual lane-indicators/mesh-overlays when safety is off
+			if car.has_node("MeshInstance3D"): # Replace with your specific indicator node name
+				car.get_node("MeshInstance3D").visible = is_on
+			
+			# Inform the car of the safety state
+			if car.has_method("set_safety_mode"):
+				car.set_safety_mode(is_on)
 
+	# 2. Network Log Updates
+	if is_on:
+		hud.post_chat_message("SYSTEM: ML Safety Protocols ACTIVE", Color(0.3, 1.0, 0.5))
+	else:
+		hud.post_chat_message("SYSTEM: ML Safety OFFLINE - High Traffic Density Simulating", Color(1.0, 0.3, 0.3))
+		# Force a "Dense Traffic" look by spawning/moving cars closer together
+		_trigger_traffic_surge()
+
+## Helper to make traffic look "heavy" by pushing cars closer
+func _trigger_traffic_surge():
+	for i in range(cars.size()):
+		# When safety is off, we reduce the gap requirement
+		# This makes them bunch up and look like a traffic jam
+		cars[i].base_speed += randf_range(-2.0, 5.0)
 func _random_building_color() -> Color:
 	var palettes = [
 		[Color(0.50, 0.46, 0.55), Color(0.40, 0.50, 0.62), Color(0.36, 0.42, 0.38)],

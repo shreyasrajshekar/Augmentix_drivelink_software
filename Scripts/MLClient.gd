@@ -6,7 +6,7 @@ signal connection_established
 signal connection_lost
 
 var websocket = WebSocketPeer.new()
-var server_url = "ws://localhost:8765"
+var server_url = "ws://127.0.0.1:8765"
 var connected = false
 var last_state = null
 
@@ -56,7 +56,16 @@ func _process(_delta):
 			emit_signal("connection_lost")
 			await get_tree().create_timer(3.0).timeout
 			connect_to_server()
-	
+	elif state == WebSocketPeer.STATE_CONNECTING:
+		print("⏳ Connecting...")
+
+	elif state == WebSocketPeer.STATE_CLOSING:
+		print("⚠️ Closing connection...")
+
+	elif state == WebSocketPeer.STATE_CLOSED:
+		var code = websocket.get_close_code()
+		var reason = websocket.get_close_reason()
+		print("❌ Closed | Code:", code, "| Reason:", reason)
 func _send_request(request: Dictionary):
 	websocket.send_text(JSON.stringify(request))
 

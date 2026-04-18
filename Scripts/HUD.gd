@@ -2,84 +2,87 @@ extends CanvasLayer
 
 var car_labels: Dictionary = {}
 var ml_label: Label
-var fps_label: Label
 var vbox: VBoxContainer
+var chat_vbox: VBoxContainer
+var scroll_container: ScrollContainer
 
 func _ready():
+	_setup_ui()
+
+func _setup_ui():
+	# Main Control Panel
 	var panel = PanelContainer.new()
 	panel.position = Vector2(12, 12)
-
-	var style = StyleBoxFlat.new()
-	style.bg_color = Color(0.0, 0.0, 0.0, 0.68)
-	style.corner_radius_top_left    = 8
-	style.corner_radius_top_right   = 8
-	style.corner_radius_bottom_left = 8
-	style.corner_radius_bottom_right = 8
-	style.content_margin_left   = 14
-	style.content_margin_right  = 14
-	style.content_margin_top    = 10
-	style.content_margin_bottom = 10
-	panel.add_theme_stylebox_override("panel", style)
+	panel.custom_minimum_size = Vector2(300, 0)
+	panel.add_theme_stylebox_override("panel", _get_style(Color(0, 0, 0, 0.7)))
 	add_child(panel)
 
 	vbox = VBoxContainer.new()
-	vbox.add_theme_constant_override("separation", 4)
 	panel.add_child(vbox)
-
-	_lbl("🚦  ML TRAFFIC CONTROL", 15, Color(1.0, 0.84, 0.18))
+	
+	_lbl(vbox, "🚦 TRAFFIC CONTROL", 14, Color.YELLOW)
+	
+	# THE TOGGLE BUTTON
+	var btn = CheckButton.new()
+	btn.text = "ML SAFETY PROTOCOL"
+	btn.button_pressed = true
+	# We connect this to the Main node (the parent of HUD)
+	btn.toggled.connect(get_parent()._on_ml_toggle_changed)
+	vbox.add_child(btn)
+	
 	vbox.add_child(HSeparator.new())
+	ml_label = _lbl(vbox, "🟢 ML Server: Online", 12, Color.GREEN)
 
-	ml_label = _lbl("⚪  ML Server: connecting…", 12, Color(0.65, 0.65, 0.65))
-	vbox.add_child(HSeparator.new())
+	# V2X Log Panel (Bottom Left)
+	var chat_panel = PanelContainer.new()
+	chat_panel.custom_minimum_size = Vector2(400, 180)
+	chat_panel.position = Vector2(12, 500) # Adjust based on screen height
+	chat_panel.add_theme_stylebox_override("panel", _get_style(Color(0.05, 0.05, 0.1, 0.8)))
+	add_child(chat_panel)
 
-	# Footer added last; car labels inserted before it
-	vbox.add_child(HSeparator.new())
-	_lbl("[SPACE] batch  [1-4] lanes  [P] ping  [R] reset", 10, Color(0.42, 0.42, 0.42))
-	fps_label = _lbl("FPS: --", 11, Color(0.48, 0.48, 0.48))
+	var chat_layout = VBoxContainer.new()
+	chat_panel.add_child(chat_layout)
+	_lbl(chat_layout, "💬 V2X NETWORK LOG", 11, Color.SKY_BLUE)
 
-func _process(_delta):
-	fps_label.text = "FPS: %d" % Engine.get_frames_per_second()
+	scroll_container = ScrollContainer.new()
+	scroll_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	chat_layout.add_child(scroll_container)
 
-func register_car(index: int):
-	if car_labels.has(index):
-		return
-	var lbl = Label.new()
-	lbl.text = "🚗 Car %d  initialising…" % index
-	lbl.add_theme_font_size_override("font_size", 12)
-	lbl.add_theme_color_override("font_color", Color(0.80, 0.80, 0.80))
-	# Insert before the last 3 footer children (sep, hint, fps)
-	var pos = max(0, vbox.get_child_count() - 3)
-	vbox.add_child(lbl)
-	vbox.move_child(lbl, pos)
-	car_labels[index] = lbl
+	chat_vbox = VBoxContainer.new()
+	scroll_container.add_child(chat_vbox)
 
-func update_car(index: int, lane: int, decision: String,
-		confidence: float, spd: float):
-	if not car_labels.has(index):
-		register_car(index)
-	var icon  = "✅ MERGE" if decision == "MERGE" else "⏳ WAIT "
-	var color = Color(0.28, 1.0, 0.42) if decision == "MERGE" else Color(0.82, 0.82, 0.82)
-	car_labels[index].text = (
-		"🚗 Car %d  |  Lane %d  |  %s  | %.0f%%  |  %.1f m/s"
-		% [index, lane, icon, confidence * 100.0, spd]
-	)
-	car_labels[index].add_theme_color_override("font_color", color)
+# ── Public Logging Functions ──
+func post_chat_message(msg: String, color: Color = Color.WHITE):
+	var l = Label.new()
+	l.text = "> " + msg
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", color)
+	chat_vbox.add_child(l)
+	
+	await get_tree().process_frame
+	scroll_container.scroll_vertical = scroll_container.get_v_scroll_bar().max_value
+	get_tree().create_timer(6.0).timeout.connect(func(): if is_instance_valid(l): l.queue_free())
 
+func _lbl(cont, txt, sz, col):
+	var l = Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", sz)
+	l.add_theme_color_override("font_color", col)
+	cont.add_child(l)
+	return l
 func set_ml_connected(is_connected: bool):
+	# If ml_label hasn't been initialized yet, wait
+	if not is_instance_valid(ml_label): return
+	
 	if is_connected:
-		ml_label.text = "🟢
-		
-		  ML Server: connected"
-		ml_label.add_theme_color_override("font_color", Color(0.28, 1.0, 0.42))
+		ml_label.text = "🟢  ML Server: connected"
+		ml_label.add_theme_color_override("font_color", Color(0.3, 1.0, 0.5))
 	else:
 		ml_label.text = "🔴  ML Server: disconnected"
-		ml_label.add_theme_color_override("font_color", Color(1.0, 0.30, 0.30))
-
-# ── Helper ─────────────────────────────────────────────────────────────────────
-func _lbl(text: String, size: int, color: Color) -> Label:
-	var l = Label.new()
-	l.text = text
-	l.add_theme_font_size_override("font_size", size)
-	l.add_theme_color_override("font_color", color)
-	vbox.add_child(l)
-	return l
+		ml_label.add_theme_color_override("font_color", Color(1.0, 0.35, 0.35))
+func _get_style(bg):
+	var s = StyleBoxFlat.new()
+	s.bg_color = bg
+	s.set_corner_radius_all(5)
+	s.set_content_margin_all(8)
+	return s
